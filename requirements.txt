@@ -1,0 +1,19 @@
+# Core document handling
+openpyxl>=3.1.0
+python-docx>=0.8.11
+pillow>=10.0.0
+
+# Security & serialization
+cryptography>=41.0.0
+protobuf>=4.21.1
+
+# Utilities
+filelock>=3.12.0
+python-dotenv>=1.0.0
+
+# LangChain / AI
+langchain-core>=0.3.0
+langchain-chroma>=0.2.0
+langchain-huggingface>=0.1.0
+sentence-transformers>=2.2.0
+langchain-google-genai
