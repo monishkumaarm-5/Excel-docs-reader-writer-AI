@@ -31,6 +31,10 @@ Thumbs.db
 # Secrets
 .env
 
+# Local vector store + cached embedding model weights (large, machine-specific)
+vector_store/
+models/
+
 # Testing / Coverage
 .pytest_cache/
 htmlcov/

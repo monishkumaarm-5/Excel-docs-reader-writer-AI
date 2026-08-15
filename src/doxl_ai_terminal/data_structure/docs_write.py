@@ -1,16 +1,14 @@
-from typing import Dict, List
-
 from doxl_ai_terminal.data_structure.docs import DocData
-from langchain_core.tools import tool
 
-@tool
+
 def write_word(doc_data: DocData, output_path: str):
+    """Write DocData back to a .docx file."""
     from docx import Document
 
     doc = Document()
 
     # Group lines by paragraph
-    para_map: Dict[int, List[str]] = {}
+    para_map: dict[int, list[str]] = {}
     for line in doc_data.lines:
         if line.paragraph not in para_map:
             para_map[line.paragraph] = []

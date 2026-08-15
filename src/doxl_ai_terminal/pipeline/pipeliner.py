@@ -1,12 +1,15 @@
+#pipeliner
 """Document processing pipeline orchestrator."""
 import os
 from typing import List
 
-from src.doxl_ai_terminal.Chunker.chunking import chunk_doc_sub_para, chunk_doc_line_by_line, chunk_excel_row_wise, \
-    chunk_excel_column_wise
-from src.doxl_ai_terminal.Frontier.fileReader import read_word, read_excel
-from src.doxl_ai_terminal.data_handler.vector_config import store_in_chroma
-from src.doxl_ai_terminal.data_structure.excel import VectorDBInstance
+from doxl_ai_terminal.Chunker.chunking import (
+    chunk_doc_sub_para, chunk_doc_line_by_line,
+    chunk_excel_row_wise, chunk_excel_column_wise,
+)
+from doxl_ai_terminal.Frontier.fileReader import read_word, read_excel
+from doxl_ai_terminal.data_handler.vector_config import store_in_chroma
+from doxl_ai_terminal.data_structure.excel import VectorDBInstance
 
 
 def process_file(filepath) -> List[VectorDBInstance]:

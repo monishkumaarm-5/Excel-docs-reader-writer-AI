@@ -9,23 +9,24 @@ Usage::
     >>> print(doxl_ai_terminal.__version__)
     '0.1.0'
 
-    >>> from doxl_ai_terminal.agents import excel_agent, docs_agent
+    >>> from doxl_ai_terminal.data_structure import DocData, ExcelData, Chunk
+    >>> from doxl_ai_terminal.tools import ALL_TOOLS, load_file
+    >>> from doxl_ai_terminal.Frontier import LiveDocManager, LiveExcelManager
 """
 
 __version__ = "0.1.0"
 __author__ = "Mohan"
 
-from .agents import config_agent, docs_agent, excel_agent, terminal_agent
-from .data_handler import vector_config, vector_db_operation
-from .pipeline import pipeliner
+# Lazy imports — heavy dependencies (LangChain, Chroma, HuggingFace) are
+# deferred until actually used.  This keeps `import doxl_ai_terminal` fast.
 
 __all__ = [
     "__version__",
-    "config_agent",
-    "docs_agent",
-    "excel_agent",
-    "terminal_agent",
-    "vector_config",
-    "vector_db_operation",
-    "pipeliner",
+    "config",
+    "data_structure",
+    "data_handler",
+    "pipeline",
+    "Frontier",
+    "Chunker",
+    "tools",
 ]

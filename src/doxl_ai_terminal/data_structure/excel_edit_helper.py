@@ -1,10 +1,12 @@
+#excel_edit_helper.py
 # ---- Find a cell ----
-from typing import List
-from langchain_core.tools import tool
+
+from typing import List, Optional
 from doxl_ai_terminal.data_structure.excel import ExcelData, ExcelCell
 
-@tool
-def find_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str) -> ExcelCell:
+
+def find_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str) -> Optional[ExcelCell]:
+    """Internal helper — find a cell by sheet, row, and column."""
     for sheet in excel_data.sheets:
         if sheet.sheet_name == sheet_name:
             for cell in sheet.cells:
@@ -14,44 +16,41 @@ def find_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: st
 
 
 # ---- Update a cell ----
-@tool
-def update_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, new_value: str):
+def update_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, new_value: str) -> str:
+    """Update a cell value in an Excel sheet by sheet name, row, and column."""
     cell = find_excel_cell(excel_data, sheet_name, row, column)
     if cell:
         old = cell.data_excel
         cell.data_excel = new_value
-        print(f"Updated: {sheet_name}[{column}{row}] '{old}' → '{new_value}'")
-    else:
-        print(f"Not found: {sheet_name}[{column}{row}]")
+        return f"Updated: {sheet_name}[{column}{row}] '{old}' → '{new_value}'"
+    return f"Not found: {sheet_name}[{column}{row}]"
 
 
 # ---- Add a cell ----
-@tool
-def add_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, value: str):
+def add_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, value: str) -> str:
+    """Add a new cell to an Excel sheet."""
     for sheet in excel_data.sheets:
         if sheet.sheet_name == sheet_name:
             sheet.cells.append(ExcelCell(row=row, column=column, data_excel=value))
-            print(f"Added: {sheet_name}[{column}{row}] = '{value}'")
-            return
-    print(f"Sheet not found: {sheet_name}")
+            return f"Added: {sheet_name}[{column}{row}] = '{value}'"
+    return f"Sheet not found: {sheet_name}"
 
 
 # ---- Delete a cell ----
-@tool
-def delete_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str):
+def delete_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str) -> str:
+    """Delete a cell from an Excel sheet by sheet name, row, and column."""
     for sheet in excel_data.sheets:
         if sheet.sheet_name == sheet_name:
             cell = find_excel_cell(excel_data, sheet_name, row, column)
             if cell:
                 sheet.cells.remove(cell)
-                print(f"Deleted: {sheet_name}[{column}{row}]")
-                return
-    print(f"Not found: {sheet_name}[{column}{row}]")
+                return f"Deleted: {sheet_name}[{column}{row}]"
+    return f"Not found: {sheet_name}[{column}{row}]"
 
 
 # ---- Search cells ----
-@tool
 def search_excel(excel_data: ExcelData, keyword: str) -> List[ExcelCell]:
+    """Search for a keyword across all cells in the Excel workbook."""
     results = []
     for sheet in excel_data.sheets:
         for cell in sheet.cells:
@@ -61,12 +60,12 @@ def search_excel(excel_data: ExcelData, keyword: str) -> List[ExcelCell]:
 
 
 # ---- Replace text in all cells ----
-@tool
-def replace_excel_text(excel_data: ExcelData, old_text: str, new_text: str):
+def replace_excel_text(excel_data: ExcelData, old_text: str, new_text: str) -> str:
+    """Find and replace text across all cells in the Excel workbook."""
     count = 0
     for sheet in excel_data.sheets:
         for cell in sheet.cells:
             if old_text in cell.data_excel:
                 cell.data_excel = cell.data_excel.replace(old_text, new_text)
                 count += 1
-    print(f"Replaced '{old_text}' → '{new_text}' in {count} cells")
+    return f"Replaced '{old_text}' → '{new_text}' in {count} cells"

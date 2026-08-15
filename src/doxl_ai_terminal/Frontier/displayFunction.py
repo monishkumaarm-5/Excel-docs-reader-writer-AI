@@ -15,7 +15,7 @@ def display_excel(excel_data):
     print("-" * 50)
 
     for sheet in excel_data.sheets:
-        print(f"\n  Sheet: {sheet.name}")
+        print(f"\n  Sheet: {sheet.sheet_name}")
         print(f"  Rows: {sheet.total_rows} | Columns: {sheet.total_columns}")
         print()
 

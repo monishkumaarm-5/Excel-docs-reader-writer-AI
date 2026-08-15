@@ -27,29 +27,21 @@ def _build_parser() -> argparse.ArgumentParser:
 
     subparsers = parser.add_subparsers(dest="command", help="Available commands")
 
-    # --- excel sub-command ---------------------------------------------------
-    excel_parser = subparsers.add_parser("excel", help="Excel file operations")
-    excel_parser.add_argument("file", nargs="?", help="Path to the Excel file")
-    excel_parser.add_argument(
-        "--read", action="store_true", help="Read the Excel file"
-    )
-    excel_parser.add_argument(
-        "--write", action="store_true", help="Write to the Excel file"
-    )
+    # --- process sub-command (read → chunk → vectorize) -----------------------
+    process_parser = subparsers.add_parser("process", help="Process a file into vector store")
+    process_parser.add_argument("file", help="Path to .docx or .xlsx file")
 
-    # --- docs sub-command ----------------------------------------------------
-    docs_parser = subparsers.add_parser("docs", help="Word document operations")
-    docs_parser.add_argument("file", nargs="?", help="Path to the Word document")
-    docs_parser.add_argument(
-        "--read", action="store_true", help="Read the Word document"
-    )
-    docs_parser.add_argument(
-        "--write", action="store_true", help="Write to the Word document"
-    )
+    # --- search sub-command ---------------------------------------------------
+    search_parser = subparsers.add_parser("search", help="Search the vector store")
+    search_parser.add_argument("file", help="Path to .docx or .xlsx file")
+    search_parser.add_argument("query", help="Search query")
 
-    # --- terminal sub-command ------------------------------------------------
-    terminal_parser = subparsers.add_parser("terminal", help="Terminal operations")
-    terminal_parser.add_argument("cmd", nargs="?", help="Command to execute")
+    # --- view sub-command -----------------------------------------------------
+    view_parser = subparsers.add_parser("view", help="View file contents")
+    view_parser.add_argument("file", help="Path to .docx or .xlsx file")
+
+    # --- info sub-command -----------------------------------------------------
+    info_parser = subparsers.add_parser("info", help="Show vector store info")
 
     return parser
 
@@ -81,12 +73,59 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
-    if args.command == "excel":
-        print(f"[doxl-ai] Excel operation on: {args.file or '(no file specified)'}")
-    elif args.command == "docs":
-        print(f"[doxl-ai] Docs operation on: {args.file or '(no file specified)'}")
-    elif args.command == "terminal":
-        print(f"[doxl-ai] Terminal command: {args.cmd or '(no command specified)'}")
+    if args.command == "process":
+        from doxl_ai_terminal.pipeline.pipeliner import process_file
+
+        print(f"[doxl-ai] Processing: {args.file}")
+        instances = process_file(args.file)
+        print(f"\n[doxl-ai] Created {len(instances)} vector store collections:")
+        for db in instances:
+            print(
+                f"  [{db.label}] {db.format_name} "
+                f"→ {db.collection_name} ({db.total_chunks} chunks)"
+            )
+
+    elif args.command == "search":
+        from doxl_ai_terminal.pipeline.pipeliner import process_file
+        from doxl_ai_terminal.pipeline.search import search
+
+        print(f"[doxl-ai] Processing: {args.file}")
+        instances = process_file(args.file)
+        print(f"\n[doxl-ai] Searching for: '{args.query}'")
+        search(instances, args.query)
+
+    elif args.command == "view":
+        import os
+        ext = os.path.splitext(args.file)[1].lower()
+
+        if ext == ".docx":
+            from doxl_ai_terminal.Frontier.fileReader import read_word
+            from doxl_ai_terminal.Frontier.displayFunction import display_doc
+            data = read_word(args.file)
+            display_doc(data)
+        elif ext == ".xlsx":
+            from doxl_ai_terminal.Frontier.fileReader import read_excel
+            from doxl_ai_terminal.Frontier.displayFunction import display_excel
+            data = read_excel(args.file)
+            display_excel(data)
+        else:
+            print(f"[doxl-ai] Unsupported file type: {ext}")
+            return 1
+
+    elif args.command == "info":
+        from doxl_ai_terminal.data_handler.vector_db_operation import VectorDBManager
+
+        mgr = VectorDBManager()
+        collections = mgr.list_collections()
+        if not collections:
+            print("[doxl-ai] No vector store collections found.")
+        else:
+            print(f"[doxl-ai] {len(collections)} collections:")
+            for name in collections:
+                mgr.load_collection(name)
+                count = mgr.collection_count()
+                print(f"  - {name} ({count} documents)")
+
     else:
         parser.print_help()
 

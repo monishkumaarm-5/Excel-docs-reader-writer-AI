@@ -1,7 +1,8 @@
+#fileReader.py
 import os
 
-from src.doxl_ai_terminal.data_structure.docs import DocData, DocLine
-from src.doxl_ai_terminal.data_structure.excel import ExcelData, ExcelSheet, ExcelCell
+from doxl_ai_terminal.data_structure.docs import DocData, DocLine
+from doxl_ai_terminal.data_structure.excel import ExcelData, ExcelSheet, ExcelCell
 
 
 def read_word(filepath) -> DocData:

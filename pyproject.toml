@@ -10,7 +10,7 @@ readme = "README.md"
 license = {text = "MIT"}
 requires-python = ">=3.9"
 authors = [
-    {name = "Mohan"},
+    {name = "Monish Kumaar M"},
 ]
 keywords = ["ai", "excel", "docx", "terminal", "agent"]
 classifiers = [
@@ -33,15 +33,24 @@ dependencies = [
     "protobuf>=4.21.1",
     "filelock>=3.12.0",
     "python-dotenv>=1.0.0",
+    "langchain-core>=0.3.0",
+    "langchain-chroma>=0.2.0",
+    "langchain-huggingface>=0.1.0",
+    "langchain-google-genai",
+    "langgraph",
+    "google-genai",
+    "sentence-transformers>=2.2.0",
+    "crewai>=0.80.0",
 ]
 
 
 [project.scripts]
+docs-excel = "doxl_ai_terminal.pipeline.runner:run_graph"
 doxl-ai = "doxl_ai_terminal.cli:main"
 
 [project.urls]
-Homepage = "https://github.com/mohan/doxl-ai-terminal"
-Issues = "https://github.com/mohan/doxl-ai-terminal/issues"
+Homepage = "https://github.com/monish/doxl-ai-terminal"
+Issues = "https://github.com/monish/doxl-ai-terminal/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
@@ -49,4 +58,8 @@ where = ["src"]
 [tool.ruff]
 target-version = "py39"
 line-length = 100
+
+
+
+
 

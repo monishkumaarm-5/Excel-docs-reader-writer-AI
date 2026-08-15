@@ -1,8 +1,9 @@
+#excel_write.py
 from doxl_ai_terminal.data_structure.excel import ExcelData
-from langchain_core.tools import tool
 
-@tool
+
 def write_excel(excel_data: ExcelData, output_path: str):
+    """Write ExcelData back to an .xlsx file."""
     from openpyxl import Workbook
     from openpyxl.utils import column_index_from_string
 
