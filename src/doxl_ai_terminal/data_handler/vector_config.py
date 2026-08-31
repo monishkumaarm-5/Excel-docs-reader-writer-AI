@@ -1,5 +1,7 @@
 #vector_config.py
+import contextlib
 import hashlib
+import io
 import os
 import re
 from pathlib import Path
@@ -56,16 +58,27 @@ def get_embedding_model(offline: bool = True):
         os.environ.setdefault("HF_HUB_OFFLINE", "1")
         os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
 
-    _EMBEDDING_MODEL_SINGLETON = HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL_NAME,
-        cache_folder=EMBEDDING_CACHE_DIR,
-        model_kwargs={
-            "device": "cpu"
-        },
-        encode_kwargs={
-            "normalize_embeddings": True
-        }
-    )
+    # sentence-transformers prints its own internal notices (e.g. a
+    # "cache_dir is deprecated" deprecation notice) straight to stderr
+    # on construction — not through the `warnings` module, so a filter
+    # can't catch it, and it goes to stderr rather than stdout. Since
+    # this app owns what appears in the terminal, swallow that library
+    # chatter here rather than let it leak into otherwise-clean output;
+    # real failures still raise normally — only the two output streams
+    # are redirected here, not exceptions, and every caller of this
+    # function already wraps it in its own try/except that prints a
+    # clean, app-styled error message.
+    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+        _EMBEDDING_MODEL_SINGLETON = HuggingFaceEmbeddings(
+            model_name=EMBEDDING_MODEL_NAME,
+            cache_folder=EMBEDDING_CACHE_DIR,
+            model_kwargs={
+                "device": "cpu"
+            },
+            encode_kwargs={
+                "normalize_embeddings": True
+            }
+        )
     return _EMBEDDING_MODEL_SINGLETON
 
 

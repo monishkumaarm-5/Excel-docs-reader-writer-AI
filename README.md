@@ -8,8 +8,8 @@ AI-powered terminal for reading and writing Excel & Word documents.
 
 ```bash
 # Clone the repository
-git clone https://github.com/mohan/doxl-ai-terminal.git
-cd doxl-ai-terminal
+git clone https://github.com/monishkumaarm-5/Excel-docs-reader-writer-AI.git
+cd Excel-docs-reader-writer-AI
 
 # Install in editable mode
 pip install -e .

@@ -73,25 +73,37 @@ def main(argv: list[str] | None = None) -> int:
         parser.print_help()
         return 0
 
+    from doxl_ai_terminal.pipeline.terminal_ui import Spinner, success, info, warn, error
+
     if args.command == "process":
         from doxl_ai_terminal.pipeline.pipeliner import process_file
 
-        print(f"[doxl-ai] Processing: {args.file}")
-        instances = process_file(args.file)
-        print(f"\n[doxl-ai] Created {len(instances)} vector store collections:")
+        spinner = Spinner(f"Processing {args.file}...").start()
+        try:
+            instances = process_file(args.file)
+        except Exception as e:
+            spinner.stop(ok=False)
+            error(str(e))
+            return 1
+        spinner.stop(ok=True)
+
+        info(f"{len(instances)} vector store collection(s) created:")
         for db in instances:
-            print(
-                f"  [{db.label}] {db.format_name} "
-                f"→ {db.collection_name} ({db.total_chunks} chunks)"
-            )
+            print(f"    {db.format_name} → {db.collection_name} ({db.total_chunks} chunks)")
 
     elif args.command == "search":
         from doxl_ai_terminal.pipeline.pipeliner import process_file
         from doxl_ai_terminal.pipeline.search import search
 
-        print(f"[doxl-ai] Processing: {args.file}")
-        instances = process_file(args.file)
-        print(f"\n[doxl-ai] Searching for: '{args.query}'")
+        spinner = Spinner(f"Processing {args.file}...").start()
+        try:
+            instances = process_file(args.file)
+        except Exception as e:
+            spinner.stop(ok=False)
+            error(str(e))
+            return 1
+        spinner.stop(ok=True)
+
         search(instances, args.query)
 
     elif args.command == "view":
@@ -109,22 +121,31 @@ def main(argv: list[str] | None = None) -> int:
             data = read_excel(args.file)
             display_excel(data)
         else:
-            print(f"[doxl-ai] Unsupported file type: {ext}")
+            error(f"Unsupported file type: {ext}")
             return 1
 
     elif args.command == "info":
         from doxl_ai_terminal.data_handler.vector_db_operation import VectorDBManager
 
-        mgr = VectorDBManager()
+        try:
+            mgr = VectorDBManager()
+        except Exception:
+            error("Couldn't load the local embedding model.")
+            info(
+                "Run this once, with internet access, to cache it: "
+                "python -m doxl_ai_terminal.data_handler.download_embedding_model"
+            )
+            return 1
+
         collections = mgr.list_collections()
         if not collections:
-            print("[doxl-ai] No vector store collections found.")
+            warn("No vector store collections found.")
         else:
-            print(f"[doxl-ai] {len(collections)} collections:")
+            info(f"{len(collections)} collection(s):")
             for name in collections:
                 mgr.load_collection(name)
                 count = mgr.collection_count()
-                print(f"  - {name} ({count} documents)")
+                print(f"    {name} ({count} documents)")
 
     else:
         parser.print_help()

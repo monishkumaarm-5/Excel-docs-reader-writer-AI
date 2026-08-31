@@ -15,7 +15,7 @@ Usage::
 """
 
 __version__ = "0.1.0"
-__author__ = "Mohan"
+__author__ = "Monish Kumaar M"
 
 # Lazy imports — heavy dependencies (LangChain, Chroma, HuggingFace) are
 # deferred until actually used.  This keeps `import doxl_ai_terminal` fast.

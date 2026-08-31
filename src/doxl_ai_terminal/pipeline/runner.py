@@ -16,7 +16,7 @@ import sys
 from langgraph.types import Command
 from doxl_ai_terminal.pipeline.state import create_initial_state
 from doxl_ai_terminal.pipeline.Graph import build_graph
-from doxl_ai_terminal.pipeline.terminal_ui import divider, info, warn, interrupt_prompt
+from doxl_ai_terminal.pipeline.terminal_ui import warn, interrupt_prompt
 
 
 def run_graph():
@@ -29,8 +29,6 @@ def run_graph():
         graph = build_graph()
         config = {"configurable": {"thread_id": "session-1"}}
         initial_state = create_initial_state()
-
-        info("Starting docs-excel pipeline...\n")
 
         # ── Initial invocation ──
         # This runs until the graph either finishes or hits an interrupt()
@@ -53,14 +51,10 @@ def run_graph():
                 # Display the interrupt question in the terminal
                 question = interrupt_value.get("question", "Please confirm:")
                 options = interrupt_value.get("options", "")
-
-                divider()
-                print(f"  \U0001f4cb {question}")
                 if options:
-                    print(f"  Options: {options}")
-                divider()
+                    question = f"{question} ({options})"
 
-                answer = interrupt_prompt("Your answer")
+                answer = interrupt_prompt(question)
 
                 # Resume the graph with the user's answer
                 graph.invoke(Command(resume=answer), config)
@@ -68,8 +62,6 @@ def run_graph():
                 # Safety: graph is waiting but no interrupt data
                 warn("Graph is paused but no interrupt data found. Breaking.")
                 break
-
-        info("Pipeline complete.\n")
 
     except KeyboardInterrupt:
         print("\n")

@@ -18,8 +18,24 @@ class ExtractedSentence:
 
 def split_into_sentences(text: str) -> List[str]:
     """Split text into sentences (full stop, ?, !)"""
-    # Handles Mr. Mrs. Dr. etc. without breaking
-    pattern = r'(?<!\b(?:Mr|Mrs|Dr|Sr|Jr|vs|etc|Prof|Inc|Ltd))\.\s+|\?\s+|!\s+'
+    # Handles Mr. Mrs. Dr. etc. without breaking.
+    #
+    # Bug this fixes: Python's `re` module requires every look-behind
+    # assertion to be FIXED-WIDTH. The abbreviations here are not all
+    # the same length ("Mr" = 2 chars, "Prof" = 4 chars), so putting
+    # them all in one `(?<!\b(?:Mr|Mrs|...|Prof|...))` alternation
+    # raised "look-behind requires fixed-width pattern" on every call
+    # — which is why find_full_sentence and find_with_context (both
+    # of which call this) failed 100% of the time. Splitting the
+    # abbreviations into separate look-behinds grouped by equal
+    # length keeps each individual assertion fixed-width, which is
+    # allowed, while still preventing a split after any of them.
+    pattern = (
+        r'(?<!\b(?:Mr|Dr|Sr|Jr|vs))'
+        r'(?<!\b(?:Mrs|etc|Inc|Ltd))'
+        r'(?<!\bProf)'
+        r'\.\s+|\?\s+|!\s+'
+    )
 
     parts = re.split(pattern, text)
     return [s.strip() for s in parts if s.strip()]

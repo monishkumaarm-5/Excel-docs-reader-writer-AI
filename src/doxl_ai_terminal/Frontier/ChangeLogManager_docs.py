@@ -31,13 +31,33 @@ class LiveDocManager:
         return [l for l in self.doc_data.lines
                 if keyword.lower() in l.line_str.lower()]
 
+    # ---- Formatting kwargs accepted by update_line/add_line/format_line ----
+    _FORMAT_FIELDS = (
+        "font_name", "font_size", "bold", "italic", "underline",
+        "font_color", "alignment",
+    )
+
+    @classmethod
+    def _apply_format_kwargs(cls, line_obj: DocLine, format_kwargs: dict) -> dict:
+        applied = {}
+        for key, val in format_kwargs.items():
+            if key in cls._FORMAT_FIELDS and val is not None:
+                setattr(line_obj, key, val)
+                applied[key] = val
+        return applied
+
     # ---- Update (with auto-sync) ----
 
-    def update_line(self, paragraph: int, line: int, new_text: str, auto_save=True):
+    def update_line(self, paragraph: int, line: int, new_text: str, auto_save=True, **format_kwargs):
+        """Update a line's text. Optional formatting kwargs (font_name,
+        font_size, bold, italic, underline, font_color, alignment) may be
+        passed to restyle the line at the same time; any left unset are
+        untouched."""
         for l in self.doc_data.lines:
             if l.paragraph == paragraph and l.line == line:
                 old = l.line_str
                 l.line_str = new_text
+                applied = self._apply_format_kwargs(l, format_kwargs)
 
                 self.changelog.add(
                     ChangeType.UPDATE,
@@ -49,16 +69,54 @@ class LiveDocManager:
                 if auto_save:
                     self._sync_to_file()
 
-                return f"Updated P{paragraph} L{line}: '{old}' → '{new_text}'"
+                suffix = f" ({applied})" if applied else ""
+                return f"Updated P{paragraph} L{line}: '{old}' → '{new_text}'{suffix}"
+
+        return f"Not found: P{paragraph} L{line}"
+
+    # ---- Format line only (with auto-sync) ----
+
+    def format_line(self, paragraph: int, line: int, auto_save=True, **format_kwargs):
+        """Change a line's formatting (font, size, bold, italic, underline,
+        color, alignment) without touching its text."""
+        for l in self.doc_data.lines:
+            if l.paragraph == paragraph and l.line == line:
+                applied = self._apply_format_kwargs(l, format_kwargs)
+                if not applied:
+                    return f"No formatting fields given for P{paragraph} L{line}"
+
+                self.changelog.add(
+                    ChangeType.UPDATE,
+                    {"paragraph": paragraph, "line": line, "format": True},
+                    new_value=str(applied),
+                )
+
+                if auto_save:
+                    self._sync_to_file()
+
+                return f"Formatted P{paragraph} L{line}: {applied}"
 
         return f"Not found: P{paragraph} L{line}"
 
     # ---- Add (with auto-sync) ----
 
-    def add_line(self, paragraph: int, line: int, text: str, auto_save=True):
+    def add_line(self, paragraph: int, line: int, text: str, auto_save=True, **format_kwargs):
+        # Make room: any existing line in this SAME paragraph at or after
+        # the requested L shifts down by one first. Without this, "add at
+        # L2" would collide with (or, combined with write_word's old
+        # insertion-order behavior, silently ignore) whatever was already
+        # at L2 — the L number needs to mean "insert here", not just be a
+        # label attached to whatever gets appended last.
+        for l in self.doc_data.lines:
+            if l.paragraph == paragraph and l.line >= line:
+                l.line += 1
+
         new_line = DocLine(paragraph=paragraph, line=line, line_str=text)
+        self._apply_format_kwargs(new_line, format_kwargs)
         self.doc_data.lines.append(new_line)
         self.doc_data.total_lines += 1
+        if paragraph > self.doc_data.total_paragraphs:
+            self.doc_data.total_paragraphs = paragraph
 
         self.changelog.add(
             ChangeType.ADD,
@@ -150,7 +208,10 @@ class LiveDocManager:
     # ---- Save to a different path ----
 
     def save_as(self, output_path: str):
-        write_word(self.doc_data, output_path)
+        # Load formatting/structure from the live file (self.filepath),
+        # not from output_path — output_path is a brand-new destination
+        # and almost never the file that actually holds the current styles.
+        write_word(self.doc_data, output_path, source_path=self.filepath)
         return f"Saved copy: {output_path}"
 
     # ---- Reload from file (discard in-memory changes) ----

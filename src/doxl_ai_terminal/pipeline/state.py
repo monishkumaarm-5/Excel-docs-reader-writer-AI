@@ -3,7 +3,7 @@
 State data structure for the LangGraph multi-agent system.
 
 New fields added for agent routing:
-  - file_type:      "docx" or "xlsx" — decides which CrewAI agent runs
+  - file_type:      "docx" or "xlsx" — decides which agent system runs
   - wants_continue: True if user wants to process another file after finishing
 """
 

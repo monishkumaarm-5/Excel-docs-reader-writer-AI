@@ -15,23 +15,53 @@ def find_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: st
     return None
 
 
+_FORMAT_FIELDS = (
+    "font_name", "font_size", "bold", "italic", "underline",
+    "font_color", "fill_color", "alignment", "number_format",
+)
+
+
+def _apply_format_kwargs(cell: ExcelCell, format_kwargs: dict) -> dict:
+    applied = {}
+    for key, val in format_kwargs.items():
+        if key in _FORMAT_FIELDS and val is not None:
+            setattr(cell, key, val)
+            applied[key] = val
+    return applied
+
+
 # ---- Update a cell ----
-def update_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, new_value: str) -> str:
-    """Update a cell value in an Excel sheet by sheet name, row, and column."""
+def update_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, new_value: str, **format_kwargs) -> str:
+    """Update a cell value (and optionally its formatting) in an Excel
+    sheet by sheet name, row, and column."""
     cell = find_excel_cell(excel_data, sheet_name, row, column)
     if cell:
         old = cell.data_excel
         cell.data_excel = new_value
+        _apply_format_kwargs(cell, format_kwargs)
         return f"Updated: {sheet_name}[{column}{row}] '{old}' → '{new_value}'"
     return f"Not found: {sheet_name}[{column}{row}]"
 
 
 # ---- Add a cell ----
-def add_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, value: str) -> str:
-    """Add a new cell to an Excel sheet."""
+def add_excel_cell(excel_data: ExcelData, sheet_name: str, row: str, column: str, value: str, **format_kwargs) -> str:
+    """Add a new cell to an Excel sheet. If a cell already exists at this
+    (row, column), it is updated in place instead of appended a second
+    time — a duplicate ExcelCell at the same address would show up twice
+    in search results even though only the last one written survives a
+    save to disk."""
     for sheet in excel_data.sheets:
         if sheet.sheet_name == sheet_name:
-            sheet.cells.append(ExcelCell(row=row, column=column, data_excel=value))
+            existing = find_excel_cell(excel_data, sheet_name, row, column)
+            if existing:
+                old = existing.data_excel
+                existing.data_excel = value
+                _apply_format_kwargs(existing, format_kwargs)
+                return f"Updated (cell already had a value): {sheet_name}[{column}{row}] '{old}' -> '{value}'"
+
+            new_cell = ExcelCell(row=row, column=column, data_excel=value)
+            _apply_format_kwargs(new_cell, format_kwargs)
+            sheet.cells.append(new_cell)
             return f"Added: {sheet_name}[{column}{row}] = '{value}'"
     return f"Sheet not found: {sheet_name}"
 

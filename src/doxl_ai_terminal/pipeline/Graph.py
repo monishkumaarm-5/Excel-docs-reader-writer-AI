@@ -84,7 +84,7 @@ def build_graph() -> StateGraph:
     # File type detection
     graph.add_node("process_file", process_file_node)
 
-    # CrewAI agent nodes (NEW)
+    # Document/Excel agent nodes (LangGraph router + specialist subgraphs)
     graph.add_node("docs_agent", docs_agent_node)
     graph.add_node("excel_agent", excel_agent_node)
 

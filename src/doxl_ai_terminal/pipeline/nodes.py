@@ -20,11 +20,11 @@ import os
 from langgraph.types import interrupt
 from doxl_ai_terminal.pipeline.state import AgentState
 from doxl_ai_terminal.pipeline.config import (
-    validate_api_key, SUPPORTED_MODELS, get_llm, get_crewai_llm,
+    validate_api_key, SUPPORTED_MODELS, get_llm, get_agentic_llm,
 )
 from doxl_ai_terminal.pipeline.terminal_ui import (
     banner, success, error, info, warn, agent_say,
-    divider, prompt_input, interrupt_prompt,
+    divider, prompt_input, interrupt_prompt, browse_for_file, Spinner,
 )
 from doxl_ai_terminal.pipeline.credential_store import (
     has_credentials, load_credentials, save_credentials,
@@ -133,17 +133,17 @@ def test_credentials_node(state: AgentState) -> AgentState:
     On failure, clears any stored credentials and loops back to onboarding.
     """
 
-    agent_say("Test Agent", "Testing your credentials...")
-
+    spinner = Spinner(
+        "Verifying your API key...",
+        done_label=f"Model '{state['model']}' is ready",
+    ).start()
     result = validate_api_key(state["api_key"], state["model"])
+    spinner.stop(ok=result["success"])
 
     if result["success"]:
-        success(f"Connection successful! Response: {result['response']}")
-        success(f"Model '{state['model']}' is ready.\n")
-
         # Persist credentials to disk for future sessions
         save_credentials(state["api_key"], state["model"])
-        info("Credentials saved to ~/.docs-excel/config.json")
+        info("Credentials saved to ~/.docs-excel/config.json\n")
 
         return {
             **state,
@@ -202,7 +202,7 @@ def path_request_node(state: AgentState) -> AgentState:
     Uses LangChain with memory (chat history in state).
     """
 
-    agent_say("Path Agent", "I need the path to your file.\n")
+    agent_say("Path Agent", "Paste the path to your file, or press Enter to browse for one.\n")
 
     llm = get_llm(state["api_key"], state["model"])
 
@@ -213,14 +213,14 @@ def path_request_node(state: AgentState) -> AgentState:
     for msg in state.get("messages", []):
         messages.append(msg)
 
-    # If no prior messages, agent starts the conversation
+    # If no prior messages, seed the conversation with a canned opener
+    # instead of spending an LLM call on it — the prompt above already
+    # told the user what to do, so there's nothing new for the model to say.
     if not state.get("messages", []):
-        initial = llm.invoke(messages + [
-            HumanMessage(content="I want to process a file.")
-        ])
-        initial_text = _extract_text(initial.content)
-        agent_say("Path Agent", initial_text)
-
+        initial_text = (
+            "Sure — paste the absolute path to your .docx or .xlsx file, "
+            "or press Enter to open a file picker."
+        )
         messages.append(HumanMessage(content="I want to process a file."))
         messages.append(AIMessage(content=initial_text))
 
@@ -233,6 +233,27 @@ def path_request_node(state: AgentState) -> AgentState:
                 **state,
                 "state": "exit",
                 "interrupt": False,
+            }
+
+        # Empty input → open a native file picker instead of typing a path.
+        if not user_input:
+            browsed = browse_for_file()
+            if not browsed:
+                warn("No file selected. Paste a path, or press Enter to try again.")
+                continue
+
+            ext = os.path.splitext(browsed)[1].lower()
+            if ext not in [".docx", ".xlsx"]:
+                error(f"'{browsed}' isn't a .docx or .xlsx file.")
+                continue
+
+            success(f"Selected: {browsed}")
+            return {
+                **state,
+                "state": "process_file",
+                "current_agent": "path_agent",
+                "file_path": browsed,
+                "messages": messages[1:],  # exclude system prompt
             }
 
         messages.append(HumanMessage(content=user_input))
@@ -364,12 +385,12 @@ def process_file_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 6: DOCS AGENT (CrewAI multi-agent for .docx)
+# NODE 6: DOCS AGENT (LangGraph multi-agent crew for .docx)
 # ═══════════════════════════════════════════════════
 
 def docs_agent_node(state: AgentState) -> AgentState:
     """
-    Run the CrewAI Document Agent system.
+    Run the Document Agent system (LangGraph router + specialist subgraphs).
 
     This node:
       1. Creates a DocsAgentSystem (reads, chunks, vectorizes the file)
@@ -379,7 +400,7 @@ def docs_agent_node(state: AgentState) -> AgentState:
     """
     from doxl_ai_terminal.agents.docs_agent import DocsAgentSystem
 
-    llm = get_crewai_llm(state["api_key"], state["model"])
+    llm = get_agentic_llm(state["api_key"], state["model"])
 
     try:
         system = DocsAgentSystem(state["file_path"], llm=llm)
@@ -397,12 +418,12 @@ def docs_agent_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 7: EXCEL AGENT (CrewAI multi-agent for .xlsx)
+# NODE 7: EXCEL AGENT (LangGraph multi-agent crew for .xlsx)
 # ═══════════════════════════════════════════════════
 
 def excel_agent_node(state: AgentState) -> AgentState:
     """
-    Run the CrewAI Excel Agent system.
+    Run the Excel Agent system (LangGraph router + specialist subgraphs).
 
     This node:
       1. Creates an ExcelAgentSystem (reads, chunks, vectorizes the file)
@@ -412,7 +433,7 @@ def excel_agent_node(state: AgentState) -> AgentState:
     """
     from doxl_ai_terminal.agents.excel_agent import ExcelAgentSystem
 
-    llm = get_crewai_llm(state["api_key"], state["model"])
+    llm = get_agentic_llm(state["api_key"], state["model"])
 
     try:
         system = ExcelAgentSystem(state["file_path"], llm=llm)
