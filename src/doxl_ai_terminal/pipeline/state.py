@@ -2,9 +2,9 @@
 """
 State data structure for the LangGraph multi-agent system.
 
-New fields added for agent routing:
-  - file_type:      "docx" or "xlsx" — decides which agent system runs
-  - wants_continue: True if user wants to process another file after finishing
+Fields:
+  - file_type:       "docx" or "xlsx" — decides which agent system runs
+  - wants_continue:  True if user wants to process another file
 """
 
 from typing import TypedDict, Annotated
@@ -12,16 +12,10 @@ from langgraph.graph.message import add_messages
 
 
 class AgentState(TypedDict):
-    """Core state shared across all agents in the graph"""
+    """Core state shared across all nodes in the graph."""
 
-    # Current state/node name in the graph
+    # Current state/node name
     state: str
-
-    # Task queue — holds pending tasks
-    task: list
-
-    # Human-in-the-loop interrupt flag
-    interrupt: bool
 
     # Which agent is currently active
     current_agent: str
@@ -38,41 +32,29 @@ class AgentState(TypedDict):
     # Gemini API key
     api_key: str
 
-    # Answer from human interrupt
-    interrupt_answer: str
-
     # File path provided by user
     file_path: str
-
-    # Whether the user confirmed the file path at the interrupt checkpoint
-    confirmed: bool
 
     # Chat messages (LangChain message history)
     messages: Annotated[list, add_messages]
 
-    # ── NEW: Agent routing fields ──
-
     # Detected file type: "docx" or "xlsx"
     file_type: str
 
-    # Whether user wants to process another file after finishing
+    # Whether user wants to process another file
     wants_continue: bool
 
 
 def create_initial_state() -> AgentState:
-    """Create a fresh initial state"""
+    """Create a fresh initial state."""
     return AgentState(
         state="start",
-        task=[],
-        interrupt=False,
         current_agent="",
         onboarded=False,
         api_error="",
         model="",
         api_key="",
-        interrupt_answer="",
         file_path="",
-        confirmed=False,
         messages=[],
         file_type="",
         wants_continue=False,

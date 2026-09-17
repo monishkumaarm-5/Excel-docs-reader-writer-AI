@@ -6,6 +6,7 @@ from doxl_ai_terminal.data_structure.docs import DocData
 from doxl_ai_terminal.data_structure.formatting import (
     alignment_to_wd,
     apply_run_format,
+    apply_paragraph_style,
     base_format_for_paragraph,
 )
 
@@ -66,6 +67,13 @@ def write_word(doc_data: DocData, output_path: str, source_path: Optional[str] =
             mapped = alignment_to_wd(requested_alignment)
             if mapped is not None:
                 paragraph.alignment = mapped
+
+        # A paragraph becomes/stops being a heading only through style --
+        # heading_level itself is derived, never written directly (see
+        # formatting.apply_paragraph_style's docstring).
+        requested_style = next((dl.style for dl in ordered if dl.style), None)
+        if requested_style:
+            apply_paragraph_style(paragraph, doc, requested_style)
 
         prev_run = None
         for dl in ordered:

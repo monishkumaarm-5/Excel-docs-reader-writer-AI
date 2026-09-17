@@ -2,34 +2,35 @@
 """
 All graph nodes for the LangGraph multi-agent system.
 
-Node Flow:
+Node Flow (simplified — no LLM path validation, no interrupt node):
   START → onboarding → test_credentials → (fail → onboarding)
                                          → (pass → path_request)
-  path_request → interrupt → (rejected → path_request)
-                            → (confirmed → process_file)
-  process_file → route → docs_agent  ─┐
-                       → excel_agent ─┤
-                                      ▼
-                              continue_prompt
-                              ↓             ↓
-                        (yes) ↓             ↓ (no)
-                        path_request       END
+  path_request → process_file → docs_agent  ─┐
+                              → excel_agent ─┤
+                                             ▼
+                                     continue_prompt
+                                     ↓             ↓
+                               (yes) ↓             ↓ (no)
+                               path_request       END
 """
 
 import os
-from langgraph.types import interrupt
+
 from doxl_ai_terminal.pipeline.state import AgentState
 from doxl_ai_terminal.pipeline.config import (
-    validate_api_key, SUPPORTED_MODELS, get_llm, get_agentic_llm,
+    validate_api_key, SUPPORTED_MODELS, get_agentic_llm,
 )
 from doxl_ai_terminal.pipeline.terminal_ui import (
     banner, success, error, info, warn, agent_say,
-    divider, prompt_input, interrupt_prompt, browse_for_file, Spinner,
+    divider, prompt_input, browse_for_file, Spinner,
+    choice_prompt, console,
 )
 from doxl_ai_terminal.pipeline.credential_store import (
     has_credentials, load_credentials, save_credentials,
 )
-from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
+
+# Valid extensions this app supports
+_VALID_EXTENSIONS = {".docx", ".xlsx"}
 
 
 def _extract_text(content) -> str:
@@ -62,7 +63,6 @@ def onboarding_node(state: AgentState) -> AgentState:
     If credentials are already stored on disk (~/.docs-excel/config.json),
     loads them automatically and skips the prompts.
     """
-
     banner()
 
     # ── Check for stored credentials ──
@@ -87,29 +87,14 @@ def onboarding_node(state: AgentState) -> AgentState:
     # ── First-time setup ──
     agent_say("Onboarding Agent", "Welcome! Let's set up your environment.\n")
 
-    # Show supported models
-    info("Supported models:")
-    for i, m in enumerate(SUPPORTED_MODELS, 1):
-        print(f"   {i}. {m}")
-    print()
+    # Show supported models as a numbered choice
+    idx = choice_prompt("Select a model:", SUPPORTED_MODELS)
+    model_name = SUPPORTED_MODELS[idx]
+    info(f"Selected model: {model_name}")
 
     # Ask for API key
+    console.print()
     api_key = prompt_input("Enter your Gemini API key: ")
-
-    # Ask for model
-    model_input = prompt_input("Enter model name (or number from list above): ")
-
-    # Handle number input
-    if model_input.isdigit():
-        idx = int(model_input) - 1
-        if 0 <= idx < len(SUPPORTED_MODELS):
-            model_name = SUPPORTED_MODELS[idx]
-        else:
-            model_name = model_input
-    else:
-        model_name = model_input.strip()
-
-    info(f"Selected model: {model_name}")
 
     return {
         **state,
@@ -132,7 +117,6 @@ def test_credentials_node(state: AgentState) -> AgentState:
     On success, saves credentials to disk so they persist across sessions.
     On failure, clears any stored credentials and loops back to onboarding.
     """
-
     spinner = Spinner(
         "Verifying your API key...",
         done_label=f"Model '{state['model']}' is ready",
@@ -141,7 +125,6 @@ def test_credentials_node(state: AgentState) -> AgentState:
     spinner.stop(ok=result["success"])
 
     if result["success"]:
-        # Persist credentials to disk for future sessions
         save_credentials(state["api_key"], state["model"])
         info("Credentials saved to ~/.docs-excel/config.json\n")
 
@@ -156,7 +139,6 @@ def test_credentials_node(state: AgentState) -> AgentState:
         error(f"Failed: {result['error']}")
         warn("Clearing credentials. Let's try again.\n")
 
-        # Clear any bad stored credentials
         from doxl_ai_terminal.pipeline.credential_store import clear_credentials
         clear_credentials()
 
@@ -172,178 +154,80 @@ def test_credentials_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 3: PATH REQUEST (with LangChain + Memory)
+# NODE 3: PATH REQUEST (simple Python validation — no LLM)
 # ═══════════════════════════════════════════════════
 
-PATH_AGENT_PROMPT = """You are a File Path Assistant. Your ONLY job is to get a valid file path from the user.
+def _validate_path(path: str) -> tuple[bool, str]:
+    """Validate a file path. Returns (ok, message)."""
+    if not path:
+        return False, "No path entered."
 
-Rules:
-1. Always ask the user for a file path if not provided.
-2. The path must be an absolute path (starts with / on Linux or drive letter on Windows like C:\\).
-3. The file must exist on disk.
-4. Only accept .docx or .xlsx files.
-5. If the path is invalid, explain WHY and ask again.
-6. If the path is valid, respond with exactly: PATH_VALID:<the_path>
-7. Never proceed without a valid path.
-8. Be helpful and patient.
+    if not os.path.isabs(path):
+        return False, f"Please enter an absolute path (got relative: '{path}')."
 
-Examples of valid paths:
-- /home/user/documents/report.docx
-- C:\\Users\\Mohan\\data.xlsx
-- /tmp/files/notes.docx
+    if not os.path.exists(path):
+        return False, f"File not found: '{path}'."
 
-If user gives a relative path like "report.docx", ask for the full absolute path.
-"""
+    ext = os.path.splitext(path)[1].lower()
+    if ext not in _VALID_EXTENSIONS:
+        return False, f"Unsupported file type '{ext}'. Only .docx and .xlsx are supported."
+
+    return True, ""
 
 
 def path_request_node(state: AgentState) -> AgentState:
+    """Ask the user for a file path with simple Python validation.
+
+    No LLM call needed — just validate the path, confirm, and proceed.
     """
-    Agent that requests and validates file path.
-    Uses LangChain with memory (chat history in state).
-    """
+    divider()
+    agent_say("File Agent", "Paste the path to your file, or press Enter to browse.\n")
 
-    agent_say("Path Agent", "Paste the path to your file, or press Enter to browse for one.\n")
-
-    llm = get_llm(state["api_key"], state["model"])
-
-    # Build message history
-    messages = [SystemMessage(content=PATH_AGENT_PROMPT)]
-
-    # Add existing chat history
-    for msg in state.get("messages", []):
-        messages.append(msg)
-
-    # If no prior messages, seed the conversation with a canned opener
-    # instead of spending an LLM call on it — the prompt above already
-    # told the user what to do, so there's nothing new for the model to say.
-    if not state.get("messages", []):
-        initial_text = (
-            "Sure — paste the absolute path to your .docx or .xlsx file, "
-            "or press Enter to open a file picker."
-        )
-        messages.append(HumanMessage(content="I want to process a file."))
-        messages.append(AIMessage(content=initial_text))
-
-    # Conversation loop with the agent
     while True:
-        user_input = prompt_input("\nYou: ")
+        user_input = prompt_input("  File path: ")
 
-        if user_input.lower() in ["quit", "exit", "q"]:
+        if user_input.lower() in ("quit", "exit", "q"):
             return {
                 **state,
                 "state": "exit",
-                "interrupt": False,
+                "current_agent": "path_agent",
             }
 
-        # Empty input → open a native file picker instead of typing a path.
+        # Empty input → open a native file picker
         if not user_input:
             browsed = browse_for_file()
             if not browsed:
                 warn("No file selected. Paste a path, or press Enter to try again.")
                 continue
+            user_input = browsed
 
-            ext = os.path.splitext(browsed)[1].lower()
-            if ext not in [".docx", ".xlsx"]:
-                error(f"'{browsed}' isn't a .docx or .xlsx file.")
-                continue
-
-            success(f"Selected: {browsed}")
-            return {
-                **state,
-                "state": "process_file",
-                "current_agent": "path_agent",
-                "file_path": browsed,
-                "messages": messages[1:],  # exclude system prompt
-            }
-
-        messages.append(HumanMessage(content=user_input))
-
-        # Let the LLM respond
-        response = llm.invoke(messages)
-        response_text = _extract_text(response.content)
-
-        messages.append(AIMessage(content=response_text))
-
-        # Check if LLM validated the path
-        if "PATH_VALID:" in response_text:
-            # Extract path from response
-            path = response_text.split("PATH_VALID:")[1].strip()
-            path = path.strip('"').strip("'").strip("`")
-
-            # Double-check on our end
-            if os.path.exists(path):
-                ext = os.path.splitext(path)[1].lower()
-                if ext in [".docx", ".xlsx"]:
-                    success(f"Valid path: {path}")
-
-                    return {
-                        **state,
-                        "state": "process_file",
-                        "current_agent": "path_agent",
-                        "file_path": path,
-                        "messages": messages[1:],  # exclude system prompt
-                    }
-
-            # If our check fails, tell agent
-            error(f"Path verification failed: {path}")
-            correction = f"The path '{path}' does not exist or is not a .docx/.xlsx file. Ask the user again."
-            messages.append(HumanMessage(content=correction))
-            response2 = llm.invoke(messages)
-            response2_text = _extract_text(response2.content)
-            messages.append(AIMessage(content=response2_text))
-            agent_say("Path Agent", response2_text)
+        # Validate
+        ok, msg = _validate_path(user_input)
+        if not ok:
+            error(msg)
             continue
 
-        # Normal response from agent
-        agent_say("Path Agent", response_text)
+        # Confirm
+        success(f"Found: {user_input}")
+        answer = prompt_input("  Process this file? (y/n): ")
+        if answer.strip().lower() not in ("y", "yes"):
+            info("Ok, enter a different path.\n")
+            continue
+
+        return {
+            **state,
+            "state": "process_file",
+            "current_agent": "path_agent",
+            "file_path": user_input,
+        }
 
 
 # ═══════════════════════════════════════════════════
-# NODE 4: HUMAN-IN-THE-LOOP INTERRUPT (LangGraph native)
-# ═══════════════════════════════════════════════════
-
-def interrupt_node(state: AgentState) -> AgentState:
-    """
-    Human-in-the-loop interrupt using LangGraph's native interrupt() API.
-
-    When this node runs, it pauses the graph and sends the interrupt
-    payload back to the caller. The graph resumes when the caller
-    invokes `graph.invoke(Command(resume=answer), config)`.
-    """
-
-    file_path = state.get("file_path", "")
-
-    # --- Pause the graph here and wait for human input ---
-    answer = interrupt({
-        "question": f"Do you want to process this file? → {file_path}",
-        "file_path": file_path,
-        "options": "yes / no",
-    })
-
-    # --- Graph resumes here with the user's answer ---
-    confirmed = answer.strip().lower() in ["yes", "y", "1", "true", "confirm"]
-
-    if confirmed:
-        success(f"User confirmed: {file_path}")
-    else:
-        warn(f"User rejected. Going back to path request.")
-
-    return {
-        **state,
-        "interrupt": False,
-        "interrupt_answer": answer,
-        "confirmed": confirmed,
-        "current_agent": "interrupt_handler",
-    }
-
-
-# ═══════════════════════════════════════════════════
-# NODE 5: PROCESS FILE — detect type and route
+# NODE 4: PROCESS FILE — detect type and route
 # ═══════════════════════════════════════════════════
 
 def process_file_node(state: AgentState) -> AgentState:
-    """
-    Detect the file type and set file_type in state.
+    """Detect the file type and set file_type in state.
 
     The conditional edge after this node reads file_type
     and routes to docs_agent or excel_agent accordingly.
@@ -364,7 +248,6 @@ def process_file_node(state: AgentState) -> AgentState:
         info("Routing to Excel Agent...\n")
 
     else:
-        # Should not happen (path_request validates), but just in case
         error(f"Unsupported file type: {ext}")
         warn("Going back to file selection.\n")
         return {
@@ -385,27 +268,18 @@ def process_file_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 6: DOCS AGENT (LangGraph multi-agent crew for .docx)
+# NODE 5: DOCS AGENT
 # ═══════════════════════════════════════════════════
 
 def docs_agent_node(state: AgentState) -> AgentState:
-    """
-    Run the Document Agent system (LangGraph router + specialist subgraphs).
-
-    This node:
-      1. Creates a DocsAgentSystem (reads, chunks, vectorizes the file)
-      2. Runs the interactive chatbot loop
-      3. When user types 'quit', control returns here
-      4. Graph continues to continue_prompt
-    """
+    """Run the Document Agent system (LangGraph router + specialist subgraphs)."""
     from doxl_ai_terminal.agents.docs_agent import DocsAgentSystem
 
     llm = get_agentic_llm(state["api_key"], state["model"])
 
     try:
         system = DocsAgentSystem(state["file_path"], llm=llm)
-        system.chat()  # ← blocks until user types "quit"
-
+        system.chat()
     except Exception as e:
         error(f"Document Agent failed: {e}")
         warn("Returning to continue prompt.\n")
@@ -418,27 +292,18 @@ def docs_agent_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 7: EXCEL AGENT (LangGraph multi-agent crew for .xlsx)
+# NODE 6: EXCEL AGENT
 # ═══════════════════════════════════════════════════
 
 def excel_agent_node(state: AgentState) -> AgentState:
-    """
-    Run the Excel Agent system (LangGraph router + specialist subgraphs).
-
-    This node:
-      1. Creates an ExcelAgentSystem (reads, chunks, vectorizes the file)
-      2. Runs the interactive chatbot loop
-      3. When user types 'quit', control returns here
-      4. Graph continues to continue_prompt
-    """
+    """Run the Excel Agent system (LangGraph router + specialist subgraphs)."""
     from doxl_ai_terminal.agents.excel_agent import ExcelAgentSystem
 
     llm = get_agentic_llm(state["api_key"], state["model"])
 
     try:
         system = ExcelAgentSystem(state["file_path"], llm=llm)
-        system.chat()  # ← blocks until user types "quit"
-
+        system.chat()
     except Exception as e:
         error(f"Excel Agent failed: {e}")
         warn("Returning to continue prompt.\n")
@@ -451,22 +316,17 @@ def excel_agent_node(state: AgentState) -> AgentState:
 
 
 # ═══════════════════════════════════════════════════
-# NODE 8: CONTINUE PROMPT — another file?
+# NODE 7: CONTINUE PROMPT — another file?
 # ═══════════════════════════════════════════════════
 
 def continue_node(state: AgentState) -> AgentState:
-    """
-    Ask the user if they want to process another file.
-
-    yes → loops back to path_request (file selection)
-    no  → graph terminates at END
-    """
+    """Ask the user if they want to process another file."""
     divider()
     agent_say("Manager", "Session complete!")
-    print()
+    console.print()
 
-    answer = prompt_input("Process another file? (yes / no): ")
-    wants = answer.strip().lower() in ["yes", "y"]
+    answer = prompt_input("Process another file? (y/n): ")
+    wants = answer.strip().lower() in ("yes", "y")
 
     if wants:
         info("Returning to file selection...\n")
@@ -478,10 +338,8 @@ def continue_node(state: AgentState) -> AgentState:
         "state": "path_request" if wants else "exit",
         "current_agent": "continue_handler",
         "wants_continue": wants,
-        # Reset file-specific state for the next round
         "file_path": "",
         "file_type": "",
-        "confirmed": False,
     }
 
 
@@ -490,32 +348,20 @@ def continue_node(state: AgentState) -> AgentState:
 # ═══════════════════════════════════════════════════
 
 def route_after_test(state: AgentState) -> str:
-    """Route after credential testing: pass → path_request, fail → onboarding"""
-    if state["onboarded"]:
-        return "path_request"
-    return "onboarding"
-
-
-def route_after_interrupt(state: AgentState) -> str:
-    """Route after interrupt: confirmed → process_file, rejected → path_request"""
-    if state.get("confirmed", False):
-        return "process_file"
-    return "path_request"
+    """Route after credential testing: pass → path_request, fail → onboarding."""
+    return "path_request" if state["onboarded"] else "onboarding"
 
 
 def route_after_process(state: AgentState) -> str:
-    """Route after process_file: based on file_type → docs_agent or excel_agent"""
-    file_type = state.get("file_type", "")
-    if file_type == "docx":
+    """Route after process_file: based on file_type → docs_agent or excel_agent."""
+    ft = state.get("file_type", "")
+    if ft == "docx":
         return "docs_agent"
-    elif file_type == "xlsx":
+    elif ft == "xlsx":
         return "excel_agent"
-    # Fallback (unsupported type) → ask for path again
     return "path_request"
 
 
 def route_after_continue(state: AgentState) -> str:
-    """Route after continue_prompt: yes → path_request, no → end"""
-    if state.get("wants_continue", False):
-        return "path_request"
-    return "end"
+    """Route after continue_prompt: yes → path_request, no → end."""
+    return "path_request" if state.get("wants_continue", False) else "end"

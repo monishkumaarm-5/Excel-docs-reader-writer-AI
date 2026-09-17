@@ -1,21 +1,24 @@
-#changelogmanger_excel.py
+# changelogmanager_excel.py
+"""Live Excel editing manager — read, edit, and sync an Excel file."""
+
 from typing import List, Dict
 
 from doxl_ai_terminal.Frontier.fileReader import read_excel
 from doxl_ai_terminal.data_structure.change_log import ChangeLog, ChangeType
-from doxl_ai_terminal.data_structure.excel import ExcelCell
+from doxl_ai_terminal.data_structure.excel import ExcelCell, coerce_excel_value, parse_row
 from doxl_ai_terminal.data_structure.excel_write import write_excel
+from doxl_ai_terminal.pipeline.terminal_ui import info
 
 
 class LiveExcelManager:
-    """Read, edit, and sync an Excel file in real-time"""
+    """Read, edit, and sync an Excel file in real-time."""
 
     def __init__(self, filepath: str):
         self.filepath = filepath
         self.excel_data = read_excel(filepath)
         self.changelog = ChangeLog()
         total = sum(len(s.cells) for s in self.excel_data.sheets)
-        print(f"Loaded: {filepath} ({total} cells)")
+        info(f"Loaded: {filepath} ({total} cells)")
 
     # ---- View ----
 
@@ -26,7 +29,7 @@ class LiveExcelManager:
                 continue
             lines.append(f"\nSheet: {sheet.sheet_name}")
             for cell in sheet.cells:
-                lines.append(f"  [{cell.column}{cell.row}] = {cell.data_excel}")
+                lines.append(f"  [{cell.address}] = {cell.data_excel}")
         return "\n".join(lines)
 
     # ---- Search ----
@@ -35,10 +38,10 @@ class LiveExcelManager:
         results = []
         for sheet in self.excel_data.sheets:
             for cell in sheet.cells:
-                if keyword.lower() in cell.data_excel.lower():
+                if keyword.lower() in str(cell.data_excel).lower():
                     results.append({
                         "sheet": sheet.sheet_name,
-                        "cell": f"{cell.column}{cell.row}",
+                        "cell": cell.address,
                         "value": cell.data_excel,
                     })
         return results
@@ -60,17 +63,15 @@ class LiveExcelManager:
 
     # ---- Update Cell (with auto-sync) ----
 
-    def update_cell(self, sheet_name: str, row: str, column: str, new_value: str, auto_save=True, **format_kwargs):
-        """Update a cell's value. Optional formatting kwargs (font_name,
-        font_size, bold, italic, underline, font_color, fill_color,
-        alignment, number_format) may be passed to restyle the cell at the
-        same time; any left unset are untouched."""
+    def update_cell(self, sheet_name: str, row: int, column: str, new_value, auto_save=True, **format_kwargs):
+        """Update a cell's value. Optional formatting kwargs may be passed."""
+        row = parse_row(row)
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
                 for cell in sheet.cells:
                     if cell.row == row and cell.column == column:
                         old = cell.data_excel
-                        cell.data_excel = new_value
+                        cell.data_excel = coerce_excel_value(new_value)
                         applied = self._apply_format_kwargs(cell, format_kwargs)
 
                         self.changelog.add(
@@ -90,9 +91,9 @@ class LiveExcelManager:
 
     # ---- Format Cell only (with auto-sync) ----
 
-    def format_cell(self, sheet_name: str, row: str, column: str, auto_save=True, **format_kwargs):
-        """Change a cell's formatting (font, size, bold, italic, underline,
-        colors, alignment, number format) without touching its value."""
+    def format_cell(self, sheet_name: str, row: int, column: str, auto_save=True, **format_kwargs):
+        """Change a cell's formatting without touching its value."""
+        row = parse_row(row)
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
                 for cell in sheet.cells:
@@ -116,19 +117,14 @@ class LiveExcelManager:
 
     # ---- Add Cell (with auto-sync) ----
 
-    def add_cell(self, sheet_name: str, row: str, column: str, value: str, auto_save=True, **format_kwargs):
+    def add_cell(self, sheet_name: str, row: int, column: str, value, auto_save=True, **format_kwargs):
+        row = parse_row(row)
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
-                # If this position already holds a value, update it in
-                # place instead of appending a second ExcelCell at the same
-                # (row, column) — a duplicate would show up twice in
-                # search_spreadsheet/get_column_data results for the rest
-                # of the session, even though only the last one written
-                # ever survives a save to disk.
                 for cell in sheet.cells:
                     if cell.row == row and cell.column == column:
                         old = cell.data_excel
-                        cell.data_excel = value
+                        cell.data_excel = coerce_excel_value(value)
                         self._apply_format_kwargs(cell, format_kwargs)
 
                         self.changelog.add(
@@ -144,7 +140,7 @@ class LiveExcelManager:
                         return (f"Updated (cell already had a value): "
                                 f"{sheet_name}[{column}{row}] '{old}' -> '{value}'")
 
-                new_cell = ExcelCell(row=row, column=column, data_excel=value)
+                new_cell = ExcelCell(row=row, column=column, data_excel=coerce_excel_value(value))
                 self._apply_format_kwargs(new_cell, format_kwargs)
                 sheet.cells.append(new_cell)
 
@@ -163,56 +159,54 @@ class LiveExcelManager:
 
     # ---- Add Row (with auto-sync) ----
 
-    def add_row(self, sheet_name: str, row_data: Dict[str, str], insert_at: str = None, auto_save=True):
+    def add_row(self, sheet_name: str, row_data: Dict[str, str], insert_at: int = None, auto_save=True):
         """Add a full row. row_data = {"A": "val1", "B": "val2", ...}
 
-        If `insert_at` is given (e.g. "3"), the new row is inserted at
+        If `insert_at` is given (e.g. 3), the new row is inserted at
         that position and every existing row at or after it shifts down
-        by one — matching add_line's shift-insert behavior for Word docs.
-        Without it, the row is appended after the current last row, same
-        as before.
+        by one. Without it, the row is appended after the current last row.
         """
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
                 if insert_at is not None:
-                    new_row_num = int(insert_at)
+                    new_row_num = parse_row(insert_at)
                     for cell in sheet.cells:
-                        if int(cell.row) >= new_row_num:
-                            cell.row = str(int(cell.row) + 1)
+                        if cell.row >= new_row_num:
+                            cell.row = cell.row + 1
                 else:
                     max_row = 0
                     for cell in sheet.cells:
-                        max_row = max(max_row, int(cell.row))
+                        max_row = max(max_row, cell.row)
                     new_row_num = max_row + 1
 
-                new_row = str(new_row_num)
                 for col, val in row_data.items():
-                    sheet.cells.append(ExcelCell(row=new_row, column=col, data_excel=val))
+                    sheet.cells.append(ExcelCell(
+                        row=new_row_num, column=col,
+                        data_excel=coerce_excel_value(val),
+                    ))
 
                 self.changelog.add(
                     ChangeType.ADD,
-                    {"sheet": sheet_name, "row": new_row},
+                    {"sheet": sheet_name, "row": new_row_num},
                     new_value=str(row_data),
                 )
 
                 if auto_save:
                     self._sync_to_file()
 
-                return f"Added row {new_row} to {sheet_name}: {row_data}"
+                return f"Added row {new_row_num} to {sheet_name}: {row_data}"
 
         return f"Sheet not found: {sheet_name}"
 
     # ---- Add Column (insert with shift, with auto-sync) ----
 
-    def add_column(self, sheet_name: str, column: str, values: Dict[str, str] = None,
+    def add_column(self, sheet_name: str, column: str, values: Dict[int, str] = None,
                     shift: bool = True, auto_save=True):
         """Insert a column at `column` (e.g. "C"). By default every
-        existing column at or after it shifts one place to the right
-        (shift=False just drops values into `column` without moving
-        anything, e.g. when you know that column is empty).
+        existing column at or after it shifts one place to the right.
 
-        `values` maps row number (as a string) to the value for the new
-        column, e.g. {"1": "Header", "2": "x"}.
+        `values` maps row number (int) to the value for the new column,
+        e.g. {1: "Header", 2: "x"}.
         """
         from openpyxl.utils import column_index_from_string, get_column_letter
 
@@ -223,16 +217,17 @@ class LiveExcelManager:
             insert_idx = column_index_from_string(column)
 
             if shift:
-                # Move the rightmost columns first so we never overwrite a
-                # cell we're about to shift into.
                 for cell in sorted(sheet.cells, key=lambda c: -column_index_from_string(c.column)):
                     idx = column_index_from_string(cell.column)
                     if idx >= insert_idx:
                         cell.column = get_column_letter(idx + 1)
 
             values = values or {}
-            for row, val in values.items():
-                sheet.cells.append(ExcelCell(row=str(row), column=column, data_excel=val))
+            for row_num, val in values.items():
+                sheet.cells.append(ExcelCell(
+                    row=parse_row(row_num), column=column,
+                    data_excel=coerce_excel_value(val),
+                ))
 
             self.changelog.add(
                 ChangeType.ADD,
@@ -251,9 +246,7 @@ class LiveExcelManager:
     # ---- Delete Column (with auto-sync) ----
 
     def delete_column(self, sheet_name: str, column: str, shift: bool = True, auto_save=True):
-        """Delete every cell in `column`. By default columns after it
-        shift one place left to close the gap (shift=False just empties
-        the column in place)."""
+        """Delete every cell in `column`."""
         from openpyxl.utils import column_index_from_string, get_column_letter
 
         for sheet in self.excel_data.sheets:
@@ -287,7 +280,8 @@ class LiveExcelManager:
 
     # ---- Delete Cell (with auto-sync) ----
 
-    def delete_cell(self, sheet_name: str, row: str, column: str, auto_save=True):
+    def delete_cell(self, sheet_name: str, row: int, column: str, auto_save=True):
+        row = parse_row(row)
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
                 for cell in sheet.cells:
@@ -310,8 +304,9 @@ class LiveExcelManager:
 
     # ---- Delete Row (with auto-sync) ----
 
-    def delete_row(self, sheet_name: str, row: str, auto_save=True):
-        """Delete all cells in a row"""
+    def delete_row(self, sheet_name: str, row: int, auto_save=True):
+        """Delete all cells in a row."""
+        row = parse_row(row)
         for sheet in self.excel_data.sheets:
             if sheet.sheet_name == sheet_name:
                 to_remove = [c for c in sheet.cells if c.row == row]
@@ -341,9 +336,10 @@ class LiveExcelManager:
         count = 0
         for sheet in self.excel_data.sheets:
             for cell in sheet.cells:
-                if old_text in cell.data_excel:
+                cell_text = str(cell.data_excel)
+                if old_text in cell_text:
                     old = cell.data_excel
-                    cell.data_excel = cell.data_excel.replace(old_text, new_text)
+                    cell.data_excel = cell_text.replace(old_text, new_text)
                     count += 1
 
                     self.changelog.add(
@@ -360,29 +356,31 @@ class LiveExcelManager:
 
     # ---- Batch Edit ----
 
-    def batch_edit(self, edits: List[Dict]):
+    def batch_edit(self, edits: List[Dict], auto_save: bool = True):
         """Apply multiple edits and save once.
 
-        Each edit: {"action": "update/add/delete", "sheet": str, "row": str, "column": str, "value": str}
+        Each edit: {"action": "update/add/delete", "sheet": str, "row": int, "column": str, "value": str}
         """
         results = []
 
         for edit in edits:
             action = edit["action"]
             sheet = edit["sheet"]
+            row = parse_row(edit["row"])
 
             if action == "update":
-                r = self.update_cell(sheet, edit["row"], edit["column"], edit["value"], auto_save=False)
+                r = self.update_cell(sheet, row, edit["column"], edit["value"], auto_save=False)
             elif action == "add":
-                r = self.add_cell(sheet, edit["row"], edit["column"], edit["value"], auto_save=False)
+                r = self.add_cell(sheet, row, edit["column"], edit["value"], auto_save=False)
             elif action == "delete":
-                r = self.delete_cell(sheet, edit["row"], edit["column"], auto_save=False)
+                r = self.delete_cell(sheet, row, edit["column"], auto_save=False)
             else:
                 r = f"Unknown action: {action}"
 
             results.append(r)
 
-        self._sync_to_file()
+        if auto_save:
+            self._sync_to_file()
         return results
 
     # ---- Sync / Save / Reload ----
@@ -391,9 +389,6 @@ class LiveExcelManager:
         write_excel(self.excel_data, self.filepath)
 
     def save_as(self, output_path: str):
-        # Load formatting from the live file (self.filepath), not from
-        # output_path — output_path is a brand-new destination and almost
-        # never the file that actually holds the current styles.
         write_excel(self.excel_data, output_path, source_path=self.filepath)
         return f"Saved copy: {output_path}"
 

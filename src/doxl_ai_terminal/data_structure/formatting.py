@@ -136,6 +136,75 @@ def alignment_to_wd(value: str):
     return _wd_alignment_map().get(value)
 
 
+def _highlight_color_map() -> dict:
+    """Lowercase-friendly-name <-> WD_COLOR_INDEX, both directions built
+    from the same source so read and write can never drift apart. Word
+    only supports this fixed palette for highlighting (unlike font_color,
+    which is arbitrary hex), so this is a name map rather than hex."""
+    from docx.enum.text import WD_COLOR_INDEX
+    return {member.name.lower(): member for member in WD_COLOR_INDEX if member.name}
+
+
+def read_highlight_color(font) -> Optional[str]:
+    """Return the lowercase friendly name of a run's highlight color
+    (e.g. "yellow"), or None if it isn't highlighted."""
+    color = getattr(font, "highlight_color", None)
+    if color is None:
+        return None
+    to_name = {v: k for k, v in _highlight_color_map().items()}
+    return to_name.get(color)
+
+
+def highlight_color_to_wd(value: str):
+    """Map a lowercase friendly name (e.g. "yellow") to a WD_COLOR_INDEX
+    member, or None for "none"/unrecognized (which clears the highlight)."""
+    if not value or value.lower() == "none":
+        return None
+    return _highlight_color_map().get(value.lower())
+
+
+def _heading_level_from_style(style_name: Optional[str]) -> Optional[int]:
+    """Parse a paragraph style name into a heading level: "Title" -> 0,
+    "Heading N" -> N, anything else (including "Normal") -> None."""
+    if not style_name:
+        return None
+    if style_name == "Title":
+        return 0
+    import re
+    m = re.fullmatch(r"Heading (\d+)", style_name)
+    return int(m.group(1)) if m else None
+
+
+def read_paragraph_style(paragraph) -> dict:
+    """Read a paragraph's style name and the heading level derived from
+    it (see _heading_level_from_style). heading_level is informational
+    only -- it's never an independent write input, just a parsed view of
+    style, so read and write can never disagree about what makes
+    something a heading."""
+    style_name = None
+    try:
+        style_name = paragraph.style.name if paragraph.style is not None else None
+    except Exception:
+        style_name = None
+    return {
+        "style": style_name,
+        "heading_level": _heading_level_from_style(style_name),
+    }
+
+
+def apply_paragraph_style(paragraph, doc, style_name: str) -> bool:
+    """Set a paragraph's style by name (e.g. "Heading 1", "Normal",
+    "Title") -- this is the ONLY way to make/unmake a heading; there is
+    no separate heading_level write path. Returns False (instead of
+    raising) if the style doesn't exist in this document's style
+    gallery, so a bad/exotic style name degrades gracefully."""
+    try:
+        paragraph.style = doc.styles[style_name]
+        return True
+    except KeyError:
+        return False
+
+
 def read_run_format(run) -> dict:
     font = run.font
     color = None
@@ -154,7 +223,11 @@ def read_run_format(run) -> dict:
         "bold": font.bold,
         "italic": font.italic,
         "underline": bool(font.underline) if font.underline is not None else None,
+        "strikethrough": font.strike,
         "font_color": color,
+        "highlight_color": read_highlight_color(font),
+        "superscript": font.superscript,
+        "subscript": font.subscript,
     }
 
 
@@ -201,6 +274,18 @@ def apply_run_format(run, doc_line, base: Optional[dict] = None) -> None:
     if underline is not None:
         font.underline = underline
 
+    strikethrough = doc_line.strikethrough if doc_line.strikethrough is not None else base.get("strikethrough")
+    if strikethrough is not None:
+        font.strike = strikethrough
+
+    superscript = doc_line.superscript if doc_line.superscript is not None else base.get("superscript")
+    if superscript is not None:
+        font.superscript = superscript
+
+    subscript = doc_line.subscript if doc_line.subscript is not None else base.get("subscript")
+    if subscript is not None:
+        font.subscript = subscript
+
     color = doc_line.font_color if doc_line.font_color is not None else base.get("font_color")
     if color:
         from docx.shared import RGBColor
@@ -208,3 +293,7 @@ def apply_run_format(run, doc_line, base: Optional[dict] = None) -> None:
             font.color.rgb = RGBColor.from_string(color)
         except Exception:
             pass
+
+    highlight = doc_line.highlight_color if doc_line.highlight_color is not None else base.get("highlight_color")
+    if highlight is not None:
+        font.highlight_color = highlight_color_to_wd(highlight)

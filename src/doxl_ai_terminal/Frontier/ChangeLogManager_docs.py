@@ -1,21 +1,23 @@
-#ChangeLogManager_docs.py
-from typing import List, Dict
+# ChangeLogManager_docs.py
+"""Live Word document editing manager — read, edit, and sync a .docx file."""
 
+from typing import List, Dict
 
 from doxl_ai_terminal.Frontier.fileReader import read_word
 from doxl_ai_terminal.data_structure.change_log import ChangeLog, ChangeType
 from doxl_ai_terminal.data_structure.docs import DocLine
 from doxl_ai_terminal.data_structure.docs_write import write_word
+from doxl_ai_terminal.pipeline.terminal_ui import info
 
 
 class LiveDocManager:
-    """Read, edit, and sync a Word document in real-time"""
+    """Read, edit, and sync a Word document in real-time."""
 
     def __init__(self, filepath: str):
         self.filepath = filepath
         self.doc_data = read_word(filepath)
         self.changelog = ChangeLog()
-        print(f"Loaded: {filepath} ({self.doc_data.total_lines} lines)")
+        info(f"Loaded: {filepath} ({self.doc_data.total_lines} lines)")
 
     # ---- View ----
 
@@ -34,7 +36,8 @@ class LiveDocManager:
     # ---- Formatting kwargs accepted by update_line/add_line/format_line ----
     _FORMAT_FIELDS = (
         "font_name", "font_size", "bold", "italic", "underline",
-        "font_color", "alignment",
+        "strikethrough", "font_color", "highlight_color",
+        "superscript", "subscript", "alignment", "style",
     )
 
     @classmethod
@@ -49,10 +52,7 @@ class LiveDocManager:
     # ---- Update (with auto-sync) ----
 
     def update_line(self, paragraph: int, line: int, new_text: str, auto_save=True, **format_kwargs):
-        """Update a line's text. Optional formatting kwargs (font_name,
-        font_size, bold, italic, underline, font_color, alignment) may be
-        passed to restyle the line at the same time; any left unset are
-        untouched."""
+        """Update a line's text. Optional formatting kwargs may be passed."""
         for l in self.doc_data.lines:
             if l.paragraph == paragraph and l.line == line:
                 old = l.line_str
@@ -77,8 +77,7 @@ class LiveDocManager:
     # ---- Format line only (with auto-sync) ----
 
     def format_line(self, paragraph: int, line: int, auto_save=True, **format_kwargs):
-        """Change a line's formatting (font, size, bold, italic, underline,
-        color, alignment) without touching its text."""
+        """Change a line's formatting without touching its text."""
         for l in self.doc_data.lines:
             if l.paragraph == paragraph and l.line == line:
                 applied = self._apply_format_kwargs(l, format_kwargs)
@@ -101,12 +100,6 @@ class LiveDocManager:
     # ---- Add (with auto-sync) ----
 
     def add_line(self, paragraph: int, line: int, text: str, auto_save=True, **format_kwargs):
-        # Make room: any existing line in this SAME paragraph at or after
-        # the requested L shifts down by one first. Without this, "add at
-        # L2" would collide with (or, combined with write_word's old
-        # insertion-order behavior, silently ignore) whatever was already
-        # at L2 — the L number needs to mean "insert here", not just be a
-        # label attached to whatever gets appended last.
         for l in self.doc_data.lines:
             if l.paragraph == paragraph and l.line >= line:
                 l.line += 1
@@ -175,7 +168,7 @@ class LiveDocManager:
 
     # ---- Batch Edit (multiple changes, one save) ----
 
-    def batch_edit(self, edits: List[Dict]):
+    def batch_edit(self, edits: List[Dict], auto_save: bool = True):
         """Apply multiple edits and save once.
 
         Each edit: {"action": "update/add/delete", "paragraph": int, "line": int, "text": str}
@@ -184,11 +177,12 @@ class LiveDocManager:
 
         for edit in edits:
             action = edit["action"]
+            fmt = edit.get("format") or {}
 
             if action == "update":
-                r = self.update_line(edit["paragraph"], edit["line"], edit["text"], auto_save=False)
+                r = self.update_line(edit["paragraph"], edit["line"], edit["text"], auto_save=False, **fmt)
             elif action == "add":
-                r = self.add_line(edit["paragraph"], edit["line"], edit["text"], auto_save=False)
+                r = self.add_line(edit["paragraph"], edit["line"], edit["text"], auto_save=False, **fmt)
             elif action == "delete":
                 r = self.delete_line(edit["paragraph"], edit["line"], auto_save=False)
             else:
@@ -196,8 +190,8 @@ class LiveDocManager:
 
             results.append(r)
 
-        # Single save after all edits
-        self._sync_to_file()
+        if auto_save:
+            self._sync_to_file()
         return results
 
     # ---- Sync data structure → file ----
@@ -208,9 +202,6 @@ class LiveDocManager:
     # ---- Save to a different path ----
 
     def save_as(self, output_path: str):
-        # Load formatting/structure from the live file (self.filepath),
-        # not from output_path — output_path is a brand-new destination
-        # and almost never the file that actually holds the current styles.
         write_word(self.doc_data, output_path, source_path=self.filepath)
         return f"Saved copy: {output_path}"
 
@@ -220,6 +211,31 @@ class LiveDocManager:
         self.doc_data = read_word(self.filepath)
         self.changelog.clear()
         return f"Reloaded from: {self.filepath}"
+
+    # ---- Paragraph style / heading inspection ----
+
+    def get_paragraph_style(self, paragraph: int):
+        for l in self.doc_data.lines:
+            if l.paragraph == paragraph:
+                return {"paragraph": paragraph, "style": l.style, "heading_level": l.heading_level}
+        return None
+
+    def get_outline(self) -> List[Dict]:
+        """The document's heading structure."""
+        by_paragraph: Dict[int, List] = {}
+        for l in self.doc_data.lines:
+            if l.heading_level is not None:
+                by_paragraph.setdefault(l.paragraph, []).append(l)
+
+        outline = []
+        for p in sorted(by_paragraph.keys()):
+            lines = sorted(by_paragraph[p], key=lambda dl: dl.line)
+            outline.append({
+                "paragraph": p,
+                "level": lines[0].heading_level,
+                "text": " ".join(l.line_str for l in lines),
+            })
+        return outline
 
     # ---- Show change history ----
 
